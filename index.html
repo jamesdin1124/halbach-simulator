@@ -236,7 +236,7 @@ body {
     <div id="grid-editor-panel">
         <div id="grid-editor-header">
             <span>Grid Editor</span>
-            <span class="grid-hint">Click: place/cycle | Shift/Right: remove</span>
+            <span class="grid-hint">Click: magnet | Ctrl: iron | Shift/Right: remove</span>
         </div>
         <canvas id="grid-canvas"></canvas>
         <div id="preset-buttons">
@@ -265,13 +265,80 @@ body {
 <!-- ============================================================ -->
 <script id="worker-source" type="text/js-worker">
 const MU0_OVER_4PI = 1e-7;
+const MU0 = 4 * Math.PI * 1e-7;
+
+// Compute dipole B-field contribution from one source at observation point
+function dipoleB(mx, my, mz, spx, spy, spz, ox, oy, oz) {
+    const rx = ox - spx, ry = oy - spy, rz = oz - spz;
+    const r2 = rx * rx + ry * ry + rz * rz;
+    if (r2 < 1e-20) return [0, 0, 0];
+    const r = Math.sqrt(r2);
+    const r3 = r2 * r;
+    const r5 = r3 * r2;
+    const mDotR = mx * rx + my * ry + mz * rz;
+    const c3 = 3 * mDotR / r5;
+    return [
+        MU0_OVER_4PI * (c3 * rx - mx / r3),
+        MU0_OVER_4PI * (c3 * ry - my / r3),
+        MU0_OVER_4PI * (c3 * rz - mz / r3)
+    ];
+}
 
 self.onmessage = function(e) {
     const t0 = performance.now();
-    const { magnets, slicePlane, sliceOffset, extent, resolution } = e.data;
+    const { magnets, irons, ironChi, ironVol, slicePlane, sliceOffset, extent, resolution } = e.data;
     const n = resolution;
     const total = n * n;
+    const nm = magnets.length;
+    const ni = irons ? irons.length : 0;
 
+    // --- Step 1: Solve iron magnetization via iterative method ---
+    // Each iron piece becomes an induced dipole: m_iron = chi * V * H_local
+    // H_local = B_local / mu0 (in free space approximation for small chi*V)
+    // For high mu_r, use demagnetization-corrected formula:
+    //   M = chi / (1 + N*chi) * H_ext  where N=1/3 for sphere
+    // We use N=1/3 (sphere approx for cube) to prevent divergence
+    const N_demag = 1.0 / 3.0;
+    const chiEff = ironChi / (1 + N_demag * ironChi); // effective susceptibility with demag
+    const ironMx = new Float64Array(ni);
+    const ironMy = new Float64Array(ni);
+    const ironMz = new Float64Array(ni);
+
+    if (ni > 0) {
+        // Iterative solve: 20 iterations (converges fast with demag factor)
+        const maxIter = 20;
+        for (let iter = 0; iter < maxIter; iter++) {
+            for (let a = 0; a < ni; a++) {
+                const ip = irons[a];
+                // B at iron[a] from permanent magnets
+                let bx = 0, by = 0, bz = 0;
+                for (let k = 0; k < nm; k++) {
+                    const m = magnets[k];
+                    const [dbx, dby, dbz] = dipoleB(m.mx, m.my, m.mz, m.px, m.py, m.pz, ip.px, ip.py, ip.pz);
+                    bx += dbx; by += dby; bz += dbz;
+                }
+                // B at iron[a] from other iron pieces
+                for (let b = 0; b < ni; b++) {
+                    if (b === a) continue;
+                    const [dbx, dby, dbz] = dipoleB(
+                        ironMx[b], ironMy[b], ironMz[b],
+                        irons[b].px, irons[b].py, irons[b].pz,
+                        ip.px, ip.py, ip.pz
+                    );
+                    bx += dbx; by += dby; bz += dbz;
+                }
+                // Induced dipole moment: m = chiEff * V * B / mu0 * mu0 = chiEff * V * B / mu0 ...
+                // M = chiEff * H = chiEff * B/mu0, then m = M * V
+                // So m = chiEff * V / mu0 * B
+                const factor = chiEff * ironVol / MU0;
+                ironMx[a] = factor * bx;
+                ironMy[a] = factor * by;
+                ironMz[a] = factor * bz;
+            }
+        }
+    }
+
+    // --- Step 2: Compute field on grid from magnets + iron dipoles ---
     const BxArr = new Float64Array(total);
     const ByArr = new Float64Array(total);
     const BzArr = new Float64Array(total);
@@ -280,12 +347,10 @@ self.onmessage = function(e) {
     const c2Arr = new Float64Array(n);
 
     for (let i = 0; i < n; i++) {
-        const v = -extent + (2 * extent * i) / (n - 1);
-        c1Arr[i] = v;
-        c2Arr[i] = v;
+        c1Arr[i] = -extent + (2 * extent * i) / (n - 1);
+        c2Arr[i] = c1Arr[i];
     }
 
-    const nm = magnets.length;
     for (let j = 0; j < n; j++) {
         for (let i = 0; i < n; i++) {
             let ox, oy, oz;
@@ -298,21 +363,20 @@ self.onmessage = function(e) {
             }
 
             let sumBx = 0, sumBy = 0, sumBz = 0;
+            // Permanent magnets
             for (let k = 0; k < nm; k++) {
                 const m = magnets[k];
-                const rx = ox - m.px;
-                const ry = oy - m.py;
-                const rz = oz - m.pz;
-                const r2 = rx * rx + ry * ry + rz * rz;
-                if (r2 < 1e-20) continue;
-                const r = Math.sqrt(r2);
-                const r3 = r2 * r;
-                const r5 = r3 * r2;
-                const mDotR = m.mx * rx + m.my * ry + m.mz * rz;
-                const c3 = 3 * mDotR / r5;
-                sumBx += MU0_OVER_4PI * (c3 * rx - m.mx / r3);
-                sumBy += MU0_OVER_4PI * (c3 * ry - m.my / r3);
-                sumBz += MU0_OVER_4PI * (c3 * rz - m.mz / r3);
+                const [dbx, dby, dbz] = dipoleB(m.mx, m.my, m.mz, m.px, m.py, m.pz, ox, oy, oz);
+                sumBx += dbx; sumBy += dby; sumBz += dbz;
+            }
+            // Iron induced dipoles
+            for (let a = 0; a < ni; a++) {
+                const [dbx, dby, dbz] = dipoleB(
+                    ironMx[a], ironMy[a], ironMz[a],
+                    irons[a].px, irons[a].py, irons[a].pz,
+                    ox, oy, oz
+                );
+                sumBx += dbx; sumBy += dby; sumBz += dbz;
             }
 
             const idx = j * n + i;
@@ -347,6 +411,11 @@ const MU0 = 4 * Math.PI * 1e-7;
 const DIPOLE_MAG = POLARIZATION_MAG * (MAGNET_SIZE ** 3) / MU0;
 const GRID_EXTENT = 0.05;
 const THROTTLE_MS = 150;
+
+// Iron (soft magnetic) properties
+const IRON_MU_R = 1000;         // Relative permeability of mild steel
+const IRON_CHI = IRON_MU_R - 1; // Magnetic susceptibility
+const IRON_VOL = MAGNET_SIZE ** 3; // 1cm³
 
 // Direction table
 const DIR_LABELS = ['+X', '-X', '+Y', '-Y', '+Z', '-Z'];
@@ -410,8 +479,10 @@ const state = {
     colorMin: null,    // null = auto, otherwise Gauss value
     colorMax: null,    // null = auto, otherwise Gauss value
     magnets: [],
+    irons: [],         // [{px,py,pz}] iron piece positions
     fieldData: null,
     gridMagnets: {},   // key="gx,gy", value=direction index 0-5
+    gridIrons: {},     // key="gx,gy", value=true (iron piece present)
     gridHover: null,   // {gx, gy} or null
 };
 
@@ -430,6 +501,15 @@ function rebuildMagnets() {
             mx: dir[0] * DIPOLE_MAG,
             my: dir[1] * DIPOLE_MAG,
             mz: dir[2] * DIPOLE_MAG
+        });
+    }
+    state.irons = [];
+    for (const key of Object.keys(state.gridIrons)) {
+        const [gx, gy] = key.split(',').map(Number);
+        state.irons.push({
+            px: gx * 0.01,
+            py: gy * 0.01,
+            pz: 0
         });
     }
 }
@@ -496,6 +576,7 @@ function loadPresetRing() {
 
 function loadPresetClear() {
     state.gridMagnets = {};
+    state.gridIrons = {};
     renderGridEditor();
     scheduleUpdate();
 }
@@ -509,7 +590,7 @@ const workerURL = URL.createObjectURL(workerBlob);
 let worker = new Worker(workerURL);
 
 function requestFieldComputation() {
-    if (state.magnets.length === 0) {
+    if (state.magnets.length === 0 && state.irons.length === 0) {
         state.fieldData = null;
         document.getElementById('status-text').textContent = 'No magnets';
         document.getElementById('status-text').className = '';
@@ -521,6 +602,9 @@ function requestFieldComputation() {
     document.getElementById('status-text').className = 'status-computing';
     worker.postMessage({
         magnets: state.magnets,
+        irons: state.irons,
+        ironChi: IRON_CHI,
+        ironVol: IRON_VOL,
         slicePlane: state.slicePlane,
         sliceOffset: state.sliceOffset,
         extent: GRID_EXTENT,
@@ -646,8 +730,18 @@ function update3DMagnets() {
         }
     }
 
+    // Draw iron pieces (gray cubes)
+    const ironMat = new THREE.MeshPhongMaterial({ color: 0x888888, transparent: true, opacity: 0.9 });
+    for (const iron of state.irons) {
+        const mesh = new THREE.Mesh(geo.clone(), ironMat);
+        mesh.position.set(iron.px, iron.py, iron.pz);
+        magnetGroup.add(mesh);
+    }
+
     updateSlicePlane3D();
-    document.getElementById('status-magnets').textContent = `Magnets: ${state.magnets.length}`;
+    const parts = [`Magnets: ${state.magnets.length}`];
+    if (state.irons.length > 0) parts.push(`Iron: ${state.irons.length}`);
+    document.getElementById('status-magnets').textContent = parts.join(' | ');
 }
 
 function updateSlicePlane3D() {
@@ -793,6 +887,7 @@ function render2D() {
     }
 
     drawMagnetOutlines2D(margin, pw, ph);
+    drawIronOutlines2D(margin, pw, ph);
     drawAxes(margin, pw, ph, cw, ch);
     drawColorLegend(margin, pw, ph, cw, ch, minL, maxL);
 
@@ -849,6 +944,42 @@ function drawMagnetOutlines2D(margin, pw, ph) {
             hmCtx.lineTo(ax2 - hl * Math.cos(ang + 0.5), ay2 - hl * Math.sin(ang + 0.5));
             hmCtx.stroke();
         }
+    }
+    hmCtx.restore();
+}
+
+function drawIronOutlines2D(margin, pw, ph) {
+    if (state.irons.length === 0) return;
+    const ext = GRID_EXTENT;
+    hmCtx.save();
+    for (const iron of state.irons) {
+        let c1, c2;
+        if (state.slicePlane === 'xy') {
+            c1 = iron.px; c2 = iron.py;
+        } else if (state.slicePlane === 'xz') {
+            c1 = iron.px; c2 = iron.pz;
+        } else {
+            c1 = iron.py; c2 = iron.pz;
+        }
+        const px = margin.left + ((c1 + ext) / (2 * ext)) * pw;
+        const py = margin.top + ((ext - c2) / (2 * ext)) * ph;
+        const sw = (MAGNET_SIZE / (2 * ext)) * pw;
+        const sh = (MAGNET_SIZE / (2 * ext)) * ph;
+
+        // Gray filled square with dark border
+        hmCtx.fillStyle = 'rgba(160,160,160,0.5)';
+        hmCtx.fillRect(px - sw/2, py - sh/2, sw, sh);
+        hmCtx.strokeStyle = '#444';
+        hmCtx.lineWidth = 1.5;
+        hmCtx.strokeRect(px - sw/2, py - sh/2, sw, sh);
+
+        // "Fe" label
+        hmCtx.fillStyle = '#333';
+        hmCtx.font = `bold ${Math.max(7, sw * 0.4)}px sans-serif`;
+        hmCtx.textAlign = 'center';
+        hmCtx.textBaseline = 'middle';
+        hmCtx.fillText('Fe', px, py);
+        hmCtx.textBaseline = 'alphabetic';
     }
     hmCtx.restore();
 }
@@ -966,9 +1097,12 @@ function renderGridEditor() {
             const y = originY + row * cs;
             const key = `${gx},${gy}`;
             const dirIdx = state.gridMagnets[key];
+            const isIron = state.gridIrons[key];
 
             if (dirIdx !== undefined) {
                 drawMagnetCell(x, y, cs, dirIdx);
+            } else if (isIron) {
+                drawIronCell(x, y, cs);
             } else {
                 const isHov = state.gridHover && state.gridHover.gx === gx && state.gridHover.gy === gy;
                 drawEmptyCell(x, y, cs, isHov);
@@ -1095,6 +1229,41 @@ function drawEmptyCell(x, y, cs, isHover) {
     gridCtx.setLineDash([]);
 }
 
+function drawIronCell(x, y, cs) {
+    const p = 1;
+    const cx = x + p, cy = y + p, sz = cs - 2 * p;
+
+    // Gray background with subtle gradient effect
+    gridCtx.fillStyle = '#7a7a7a';
+    gridCtx.fillRect(cx, cy, sz, sz);
+
+    // Crosshatch pattern to distinguish from magnets
+    gridCtx.strokeStyle = '#999';
+    gridCtx.lineWidth = 0.5;
+    const step = Math.max(3, sz / 5);
+    for (let d = step; d < sz * 2; d += step) {
+        gridCtx.beginPath();
+        gridCtx.moveTo(cx + Math.max(0, d - sz), cy + Math.min(d, sz));
+        gridCtx.lineTo(cx + Math.min(d, sz), cy + Math.max(0, d - sz));
+        gridCtx.stroke();
+    }
+
+    // Dark border
+    gridCtx.strokeStyle = '#444';
+    gridCtx.lineWidth = 1;
+    gridCtx.strokeRect(cx, cy, sz, sz);
+
+    // "Fe" label
+    if (cs >= 20) {
+        gridCtx.fillStyle = '#fff';
+        gridCtx.font = `bold ${Math.max(8, cs * 0.3)}px sans-serif`;
+        gridCtx.textAlign = 'center';
+        gridCtx.textBaseline = 'middle';
+        gridCtx.fillText('Fe', cx + sz/2, cy + sz/2);
+        gridCtx.textBaseline = 'alphabetic';
+    }
+}
+
 // ============================================================
 // Grid Editor Interaction
 // ============================================================
@@ -1118,9 +1287,23 @@ function initGridEvents() {
         const key = `${pos.gx},${pos.gy}`;
 
         if (e.shiftKey) {
+            // Remove whatever is here
             delete state.gridMagnets[key];
+            delete state.gridIrons[key];
+        } else if (e.ctrlKey || e.metaKey) {
+            // Ctrl/Cmd-click: toggle iron piece
+            if (key in state.gridIrons) {
+                delete state.gridIrons[key];
+            } else {
+                delete state.gridMagnets[key]; // remove magnet if present
+                state.gridIrons[key] = true;
+            }
         } else if (key in state.gridMagnets) {
             state.gridMagnets[key] = nextDirection(state.gridMagnets[key]);
+        } else if (key in state.gridIrons) {
+            // Click on iron → remove iron, place magnet
+            delete state.gridIrons[key];
+            state.gridMagnets[key] = 4; // default +Z
         } else {
             state.gridMagnets[key] = 4; // default +Z
         }
@@ -1132,7 +1315,9 @@ function initGridEvents() {
         e.preventDefault();
         const pos = gridCoordsFromMouse(e);
         if (!pos) return;
-        delete state.gridMagnets[`${pos.gx},${pos.gy}`];
+        const key = `${pos.gx},${pos.gy}`;
+        delete state.gridMagnets[key];
+        delete state.gridIrons[key];
         renderGridEditor();
         scheduleUpdate();
     });
@@ -1140,7 +1325,7 @@ function initGridEvents() {
     gridCanvas.addEventListener('mousemove', (e) => {
         const pos = gridCoordsFromMouse(e);
         const key = pos ? `${pos.gx},${pos.gy}` : null;
-        const isEmpty = key && !(key in state.gridMagnets);
+        const isEmpty = key && !(key in state.gridMagnets) && !(key in state.gridIrons);
 
         if (isEmpty) {
             if (!state.gridHover || state.gridHover.gx !== pos.gx || state.gridHover.gy !== pos.gy) {
@@ -1153,7 +1338,7 @@ function initGridEvents() {
         }
 
         // Change cursor
-        if (pos && key in state.gridMagnets) {
+        if (pos && (key in state.gridMagnets || key in state.gridIrons)) {
             gridCanvas.style.cursor = 'pointer';
         } else {
             gridCanvas.style.cursor = 'crosshair';
