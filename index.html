@@ -137,6 +137,9 @@ body {
 #preset-buttons button:hover {
     background: #1a4a7a;
 }
+#preset-buttons button.iron-preset-hidden {
+    display: none;
+}
 
 /* ---- Main Content ---- */
 #main {
@@ -201,6 +204,13 @@ body {
 
 <div id="controls">
     <div class="ctrl-group">
+        <label>Mode:</label>
+        <select id="sel-mode">
+            <option value="magnets" selected>Magnets Only</option>
+            <option value="iron">Magnets + Iron</option>
+        </select>
+    </div>
+    <div class="ctrl-group">
         <label>Slice:</label>
         <select id="sel-plane">
             <option value="xz" selected>XZ (Front)</option>
@@ -236,7 +246,7 @@ body {
     <div id="grid-editor-panel">
         <div id="grid-editor-header">
             <span>Grid Editor</span>
-            <span class="grid-hint">Click: magnet | Ctrl: iron | Shift/Right: remove</span>
+            <span class="grid-hint" id="grid-hint">Click: place/cycle | Shift/Right: remove</span>
         </div>
         <canvas id="grid-canvas"></canvas>
         <div id="preset-buttons">
@@ -245,8 +255,8 @@ body {
             <button id="btn-ring">Ring</button>
             <button id="btn-9a">9A</button>
             <button id="btn-10b">10B</button>
-            <button id="btn-11a">11A+Fe</button>
-            <button id="btn-12b">12B+Fe</button>
+            <button id="btn-11a" class="iron-preset">11A+Fe</button>
+            <button id="btn-12b" class="iron-preset">12B+Fe</button>
             <button id="btn-clear">Clear</button>
         </div>
     </div>
@@ -480,6 +490,7 @@ function colormap(t) {
 // State
 // ============================================================
 const state = {
+    ironMode: false,   // false = magnets only, true = magnets + iron
     slicePlane: 'xz',
     sliceOffset: 0.0,
     resolution: 40,
@@ -594,15 +605,17 @@ function loadPreset9A() {
     for (let i = 0; i < 5; i++) {
         state.gridMagnets[`${i - 2},0`] = dirs[i];
     }
-    // Iron at boundaries: between each pair of adjacent magnets
-    for (let i = 0; i < 4; i++) {
-        state.gridIrons[`${i - 2 + 0.5},0`] = true;
+    // Iron only in iron mode
+    if (state.ironMode) {
+        for (let i = 0; i < 4; i++) {
+            state.gridIrons[`${i - 2 + 0.5},0`] = true;
+        }
     }
     renderGridEditor();
     scheduleUpdate();
 }
 
-// 10°B: 5 magnets ↑→↓←↑ + iron between each pair
+// 10°B: 5 magnets ↑→↓←↑ (+ iron between each pair in iron mode)
 function loadPreset10B() {
     state.gridMagnets = {};
     state.gridIrons = {};
@@ -610,8 +623,10 @@ function loadPreset10B() {
     for (let i = 0; i < 5; i++) {
         state.gridMagnets[`${i - 2},0`] = dirs[i];
     }
-    for (let i = 0; i < 4; i++) {
-        state.gridIrons[`${i - 2 + 0.5},0`] = true;
+    if (state.ironMode) {
+        for (let i = 0; i < 4; i++) {
+            state.gridIrons[`${i - 2 + 0.5},0`] = true;
+        }
     }
     renderGridEditor();
     scheduleUpdate();
@@ -1460,8 +1475,8 @@ function initGridEvents() {
             delete state.gridIrons[`${pos.gx + 0.5},${pos.gy}`];
             delete state.gridIrons[`${pos.gx},${pos.gy - 0.5}`];
             delete state.gridIrons[`${pos.gx},${pos.gy + 0.5}`];
-        } else if (e.ctrlKey || e.metaKey) {
-            // Ctrl/Cmd-click: place/remove iron at nearest cell edge
+        } else if ((e.ctrlKey || e.metaKey) && state.ironMode) {
+            // Ctrl/Cmd-click: place/remove iron at nearest cell edge (iron mode only)
             const edge = gridEdgeFromMouse(e);
             if (edge) {
                 const ironKey = `${edge.gx},${edge.gy}`;
@@ -1559,7 +1574,33 @@ function scheduleViewUpdate() {
 // ============================================================
 // Event Listeners
 // ============================================================
+function applyMode(mode) {
+    const isIron = (mode === 'iron');
+    state.ironMode = isIron;
+    // Update grid hint text
+    const hintEl = document.getElementById('grid-hint');
+    if (hintEl) {
+        hintEl.textContent = isIron
+            ? 'Click: magnet | Ctrl: iron | Shift/Right: remove'
+            : 'Click: place/cycle | Shift/Right: remove';
+    }
+    // Show/hide iron preset buttons
+    document.querySelectorAll('.iron-preset').forEach(btn => {
+        btn.classList.toggle('iron-preset-hidden', !isIron);
+    });
+    // If switching to magnets-only mode, clear iron
+    if (!isIron && Object.keys(state.gridIrons).length > 0) {
+        state.gridIrons = {};
+        renderGridEditor();
+        scheduleUpdate();
+    }
+}
+
 function initEvents() {
+    // Mode selector
+    const selMode = document.getElementById('sel-mode');
+    selMode.addEventListener('change', () => { applyMode(selMode.value); });
+
     const selPlane = document.getElementById('sel-plane');
     const rngOffset = document.getElementById('rng-offset');
     const valOffset = document.getElementById('val-offset');
@@ -1646,7 +1687,8 @@ function init() {
     resizeHeatmapCanvas();
     resizeGridCanvas();
     initEvents();
-    loadPresetLinear(); // default: 8-magnet linear Halbach
+    applyMode('magnets'); // default: magnets only mode
+    loadPresetLinear();   // default: 8-magnet linear Halbach
 }
 
 init();
