@@ -222,6 +222,14 @@ body {
     <div class="ctrl-group">
         <label><input type="checkbox" id="chk-arrows" checked> Arrows</label>
     </div>
+    <div class="ctrl-group">
+        <label>Range:</label>
+        <input type="number" id="inp-cmin" min="0" max="99999" value="" placeholder="auto" style="width:60px;background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:3px;padding:2px 4px;font-size:12px;">
+        <label>~</label>
+        <input type="number" id="inp-cmax" min="0" max="99999" value="" placeholder="auto" style="width:60px;background:#0f3460;color:#e0e0e0;border:1px solid #333;border-radius:3px;padding:2px 4px;font-size:12px;">
+        <label>G</label>
+        <button id="btn-range-reset" style="background:#0f3460;color:#aaa;border:1px solid #333;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;" title="Reset to auto">Auto</button>
+    </div>
 </div>
 
 <div id="main">
@@ -399,6 +407,8 @@ const state = {
     sliceOffset: 0.0,
     resolution: 40,
     showArrows: true,
+    colorMin: null,    // null = auto, otherwise Gauss value
+    colorMax: null,    // null = auto, otherwise Gauss value
     magnets: [],
     fieldData: null,
     gridMagnets: {},   // key="gx,gy", value=direction index 0-5
@@ -523,9 +533,12 @@ worker.onmessage = (e) => {
     document.getElementById('status-text').textContent = `Computed in ${e.data.ms.toFixed(1)} ms`;
     document.getElementById('status-text').className = '';
     const bmag = e.data.Bmag;
-    let maxB = 0;
-    for (let i = 0; i < bmag.length; i++) if (bmag[i] > maxB) maxB = bmag[i];
-    document.getElementById('status-field').textContent = `Max |B|: ${(maxB * 10000).toFixed(1)} G`;
+    let maxB = 0, minB = Infinity;
+    for (let i = 0; i < bmag.length; i++) {
+        if (bmag[i] > maxB) maxB = bmag[i];
+        if (bmag[i] < minB) minB = bmag[i];
+    }
+    document.getElementById('status-field').textContent = `|B|: ${(minB * 10000).toFixed(1)} ~ ${(maxB * 10000).toFixed(1)} G`;
     render2D();
 };
 
@@ -692,13 +705,16 @@ function render2D() {
     const { Bx, By, Bz, Bmag } = fd;
 
     const logB = new Float64Array(n * n);
-    let minL = Infinity, maxL = -Infinity;
+    let autoMinL = Infinity, autoMaxL = -Infinity;
     for (let i = 0; i < n * n; i++) {
         const v = Math.log10(Math.max(Bmag[i] * 10000, 1e-2));
         logB[i] = v;
-        if (v < minL) minL = v;
-        if (v > maxL) maxL = v;
+        if (v < autoMinL) autoMinL = v;
+        if (v > autoMaxL) autoMaxL = v;
     }
+    // Apply user-defined range (in Gauss) if set
+    const minL = (state.colorMin !== null && state.colorMin > 0) ? Math.log10(state.colorMin) : autoMinL;
+    const maxL = (state.colorMax !== null && state.colorMax > 0) ? Math.log10(state.colorMax) : autoMaxL;
     const rangeL = maxL - minL || 1;
 
     const imgCanvas = document.createElement('canvas');
@@ -1197,6 +1213,32 @@ function initEvents() {
 
     chkArrows.addEventListener('change', () => {
         state.showArrows = chkArrows.checked;
+        scheduleViewUpdate();
+    });
+
+    // Color range controls
+    const inpCmin = document.getElementById('inp-cmin');
+    const inpCmax = document.getElementById('inp-cmax');
+    const btnRangeReset = document.getElementById('btn-range-reset');
+
+    function updateColorRange() {
+        const vMin = inpCmin.value.trim();
+        const vMax = inpCmax.value.trim();
+        state.colorMin = (vMin === '' || isNaN(parseFloat(vMin))) ? null : parseFloat(vMin);
+        state.colorMax = (vMax === '' || isNaN(parseFloat(vMax))) ? null : parseFloat(vMax);
+        scheduleViewUpdate();
+    }
+
+    inpCmin.addEventListener('change', updateColorRange);
+    inpCmax.addEventListener('change', updateColorRange);
+    inpCmin.addEventListener('keyup', (e) => { if (e.key === 'Enter') updateColorRange(); });
+    inpCmax.addEventListener('keyup', (e) => { if (e.key === 'Enter') updateColorRange(); });
+
+    btnRangeReset.addEventListener('click', () => {
+        inpCmin.value = '';
+        inpCmax.value = '';
+        state.colorMin = null;
+        state.colorMax = null;
         scheduleViewUpdate();
     });
 
