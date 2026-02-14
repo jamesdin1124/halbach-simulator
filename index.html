@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Halbach Array Magnetic Field Simulator</title>
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---- Header ---- */
+#header {
+    background: #16213e;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid #0f3460;
+    flex-shrink: 0;
+}
+#header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #e94560;
+    white-space: nowrap;
+}
+
+/* ---- Controls Panel ---- */
+#controls {
+    background: #16213e;
+    padding: 8px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    border-bottom: 1px solid #0f3460;
+    flex-shrink: 0;
+}
+.ctrl-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+.ctrl-group label {
+    color: #a0a0c0;
+    white-space: nowrap;
+}
+.ctrl-group select,
+.ctrl-group input[type="range"] {
+    accent-color: #e94560;
+}
+.ctrl-group select {
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #335;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 13px;
+}
+.ctrl-group input[type="range"] {
+    width: 100px;
+}
+.ctrl-group input[type="checkbox"] {
+    accent-color: #e94560;
+}
+.ctrl-val {
+    color: #e94560;
+    font-weight: 600;
+    min-width: 28px;
+    text-align: center;
+}
+
+/* ---- Grid Editor Panel ---- */
+#grid-editor-panel {
+    width: 280px;
+    min-width: 280px;
+    background: #16213e;
+    border-right: 1px solid #0f3460;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+#grid-editor-header {
+    padding: 8px 12px;
+    font-size: 13px;
+    color: #e0e0e0;
+    border-bottom: 1px solid #0f3460;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.grid-hint {
+    font-size: 10px;
+    color: #666;
+}
+#grid-canvas {
+    flex: 1;
+    width: 100%;
+    cursor: crosshair;
+}
+#preset-buttons {
+    padding: 8px 10px;
+    display: flex;
+    gap: 5px;
+    border-top: 1px solid #0f3460;
+    flex-wrap: wrap;
+}
+#preset-buttons button {
+    background: #0f3460;
+    color: #e0e0e0;
+    border: 1px solid #335;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+    flex: 1;
+    min-width: 70px;
+}
+#preset-buttons button:hover {
+    background: #1a4a7a;
+}
+
+/* ---- Main Content ---- */
+#main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+#three-container {
+    flex: 1;
+    position: relative;
+    min-width: 0;
+}
+#three-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+}
+#canvas-container {
+    flex: 1;
+    position: relative;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+#heatmap-canvas {
+    flex: 1;
+    width: 100%;
+}
+
+/* ---- Status Bar ---- */
+#status-bar {
+    background: #16213e;
+    padding: 4px 16px;
+    font-size: 12px;
+    color: #888;
+    border-top: 1px solid #0f3460;
+    display: flex;
+    gap: 20px;
+    flex-shrink: 0;
+}
+.status-computing {
+    color: #e94560 !important;
+}
+
+/* ---- 3D Labels ---- */
+#three-label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    font-size: 12px;
+    color: #888;
+    pointer-events: none;
+    z-index: 1;
+}
+</style>
+</head>
+<body>
+
+<div id="header">
+    <h1>Halbach Array Magnetic Field Simulator</h1>
+</div>
+
+<div id="controls">
+    <div class="ctrl-group">
+        <label>Slice:</label>
+        <select id="sel-plane">
+            <option value="xz" selected>XZ (Front)</option>
+            <option value="xy">XY (Top)</option>
+            <option value="yz">YZ (Side)</option>
+        </select>
+    </div>
+    <div class="ctrl-group">
+        <label>Offset:</label>
+        <input type="range" id="rng-offset" min="-5" max="5" value="0" step="0.5">
+        <span class="ctrl-val" id="val-offset">0</span>
+        <label>cm</label>
+    </div>
+    <div class="ctrl-group">
+        <label>Resolution:</label>
+        <input type="range" id="rng-resolution" min="20" max="80" value="40" step="5">
+        <span class="ctrl-val" id="val-resolution">40</span>
+    </div>
+    <div class="ctrl-group">
+        <label><input type="checkbox" id="chk-arrows" checked> Arrows</label>
+    </div>
+</div>
+
+<div id="main">
+    <div id="grid-editor-panel">
+        <div id="grid-editor-header">
+            <span>Grid Editor</span>
+            <span class="grid-hint">Click: place/cycle | Shift/Right: remove</span>
+        </div>
+        <canvas id="grid-canvas"></canvas>
+        <div id="preset-buttons">
+            <button id="btn-linear">Linear (8)</button>
+            <button id="btn-cross">Cross</button>
+            <button id="btn-ring">Ring</button>
+            <button id="btn-clear">Clear</button>
+        </div>
+    </div>
+    <div id="three-container">
+        <div id="three-label">3D View (drag to rotate)</div>
+    </div>
+    <div id="canvas-container">
+        <canvas id="heatmap-canvas"></canvas>
+    </div>
+</div>
+
+<div id="status-bar">
+    <span id="status-text">Ready</span>
+    <span id="status-field"></span>
+    <span id="status-magnets"></span>
+</div>
+
+<!-- ============================================================ -->
+<!-- Web Worker (inline, unchanged)                                -->
+<!-- ============================================================ -->
+<script id="worker-source" type="text/js-worker">
+const MU0_OVER_4PI = 1e-7;
+
+self.onmessage = function(e) {
+    const t0 = performance.now();
+    const { magnets, slicePlane, sliceOffset, extent, resolution } = e.data;
+    const n = resolution;
+    const total = n * n;
+
+    const BxArr = new Float64Array(total);
+    const ByArr = new Float64Array(total);
+    const BzArr = new Float64Array(total);
+    const BmagArr = new Float64Array(total);
+    const c1Arr = new Float64Array(n);
+    const c2Arr = new Float64Array(n);
+
+    for (let i = 0; i < n; i++) {
+        const v = -extent + (2 * extent * i) / (n - 1);
+        c1Arr[i] = v;
+        c2Arr[i] = v;
+    }
+
+    const nm = magnets.length;
+    for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+            let ox, oy, oz;
+            if (slicePlane === 'xy') {
+                ox = c1Arr[i]; oy = c2Arr[j]; oz = sliceOffset;
+            } else if (slicePlane === 'xz') {
+                ox = c1Arr[i]; oy = sliceOffset; oz = c2Arr[j];
+            } else {
+                ox = sliceOffset; oy = c1Arr[i]; oz = c2Arr[j];
+            }
+
+            let sumBx = 0, sumBy = 0, sumBz = 0;
+            for (let k = 0; k < nm; k++) {
+                const m = magnets[k];
+                const rx = ox - m.px;
+                const ry = oy - m.py;
+                const rz = oz - m.pz;
+                const r2 = rx * rx + ry * ry + rz * rz;
+                if (r2 < 1e-20) continue;
+                const r = Math.sqrt(r2);
+                const r3 = r2 * r;
+                const r5 = r3 * r2;
+                const mDotR = m.mx * rx + m.my * ry + m.mz * rz;
+                const c3 = 3 * mDotR / r5;
+                sumBx += MU0_OVER_4PI * (c3 * rx - m.mx / r3);
+                sumBy += MU0_OVER_4PI * (c3 * ry - m.my / r3);
+                sumBz += MU0_OVER_4PI * (c3 * rz - m.mz / r3);
+            }
+
+            const idx = j * n + i;
+            BxArr[idx] = sumBx;
+            ByArr[idx] = sumBy;
+            BzArr[idx] = sumBz;
+            BmagArr[idx] = Math.sqrt(sumBx * sumBx + sumBy * sumBy + sumBz * sumBz);
+        }
+    }
+
+    const ms = performance.now() - t0;
+    self.postMessage(
+        { Bx: BxArr, By: ByArr, Bz: BzArr, Bmag: BmagArr, c1: c1Arr, c2: c2Arr, resolution: n, ms },
+        [BxArr.buffer, ByArr.buffer, BzArr.buffer, BmagArr.buffer, c1Arr.buffer, c2Arr.buffer]
+    );
+};
+</script>
+
+<!-- ============================================================ -->
+<!-- Main Application                                             -->
+<!-- ============================================================ -->
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ============================================================
+// Constants
+// ============================================================
+const MAGNET_SIZE = 0.01;
+const POLARIZATION_MAG = 0.45;  // 4500 Gauss = 0.45 T
+const MU0 = 4 * Math.PI * 1e-7;
+const DIPOLE_MAG = POLARIZATION_MAG * (MAGNET_SIZE ** 3) / MU0;
+const GRID_EXTENT = 0.05;
+const THROTTLE_MS = 150;
+
+// Direction table
+const DIR_LABELS = ['+X', '-X', '+Y', '-Y', '+Z', '-Z'];
+const DIR_VECTORS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+
+// Grid placement constants
+const GRID_MIN = -5;
+const GRID_MAX = 5;
+const GRID_SIZE = GRID_MAX - GRID_MIN + 1; // 11
+
+// Direction cycle: +Z -> +X -> -Z -> -X -> +Y -> -Y
+const DIR_CYCLE = [4, 0, 5, 1, 2, 3];
+function nextDirection(cur) {
+    const i = DIR_CYCLE.indexOf(cur);
+    return DIR_CYCLE[(i + 1) % DIR_CYCLE.length];
+}
+
+// N/S pole colors
+const N_COLOR = '#e63946';
+const S_COLOR = '#457b9d';
+
+// RdBu_r colormap (9 stops, from matplotlib)
+const CMAP_STOPS = [
+    [0.000, 5, 48, 97],
+    [0.125, 33, 102, 172],
+    [0.250, 67, 147, 195],
+    [0.375, 146, 197, 222],
+    [0.500, 247, 247, 247],
+    [0.625, 244, 165, 130],
+    [0.750, 214, 96, 77],
+    [0.875, 178, 24, 43],
+    [1.000, 103, 0, 31]
+];
+
+function colormap(t) {
+    t = Math.max(0, Math.min(1, t));
+    for (let i = 0; i < CMAP_STOPS.length - 1; i++) {
+        const [t0, r0, g0, b0] = CMAP_STOPS[i];
+        const [t1, r1, g1, b1] = CMAP_STOPS[i + 1];
+        if (t >= t0 && t <= t1) {
+            const f = (t - t0) / (t1 - t0);
+            return [
+                Math.round(r0 + f * (r1 - r0)),
+                Math.round(g0 + f * (g1 - g0)),
+                Math.round(b0 + f * (b1 - b0))
+            ];
+        }
+    }
+    const last = CMAP_STOPS[CMAP_STOPS.length - 1];
+    return [last[1], last[2], last[3]];
+}
+
+// ============================================================
+// State
+// ============================================================
+const state = {
+    slicePlane: 'xz',
+    sliceOffset: 0.0,
+    resolution: 40,
+    showArrows: true,
+    magnets: [],
+    fieldData: null,
+    gridMagnets: {},   // key="gx,gy", value=direction index 0-5
+    gridHover: null,   // {gx, gy} or null
+};
+
+// ============================================================
+// Magnet Builder (from grid)
+// ============================================================
+function rebuildMagnets() {
+    state.magnets = [];
+    for (const [key, dirIdx] of Object.entries(state.gridMagnets)) {
+        const [gx, gy] = key.split(',').map(Number);
+        const dir = DIR_VECTORS[dirIdx];
+        state.magnets.push({
+            px: gx * 0.01,  // cm -> m
+            py: gy * 0.01,
+            pz: 0,
+            mx: dir[0] * DIPOLE_MAG,
+            my: dir[1] * DIPOLE_MAG,
+            mz: dir[2] * DIPOLE_MAG
+        });
+    }
+}
+
+// ============================================================
+// Presets
+// ============================================================
+function loadPresetLinear() {
+    state.gridMagnets = {};
+    // 8-magnet linear Halbach along X, pattern: +X, +Z, -X, -Z repeated
+    const dirs = [0, 4, 1, 5, 0, 4, 1, 5];
+    for (let i = 0; i < 8; i++) {
+        state.gridMagnets[`${i - 4},0`] = dirs[i];
+    }
+    renderGridEditor();
+    scheduleUpdate();
+}
+
+function loadPresetCross() {
+    state.gridMagnets = {};
+    // Center: +Z
+    state.gridMagnets['0,0'] = 4;
+    // Arm directions derived from Python create_cross_halbach:
+    // +X arm at distance i: angle=i*PI/2 -> (cos, sin) -> direction
+    //   i=1: (0,1) -> +Z(4)  i=2: (-1,0) -> -X(1)  i=3: (0,-1) -> -Z(5)
+    const pxDirs = [4, 1, 5]; // +X arm
+    const nxDirs = [4, 0, 5]; // -X arm (mx negated)
+    const pyDirs = [4, 3, 5]; // +Y arm
+    const nyDirs = [4, 2, 5]; // -Y arm (my negated)
+    for (let i = 1; i <= 3; i++) {
+        state.gridMagnets[`${i},0`]  = pxDirs[i-1];
+        state.gridMagnets[`${-i},0`] = nxDirs[i-1];
+        state.gridMagnets[`0,${i}`]  = pyDirs[i-1];
+        state.gridMagnets[`0,${-i}`] = nyDirs[i-1];
+    }
+    renderGridEditor();
+    scheduleUpdate();
+}
+
+function loadPresetRing() {
+    state.gridMagnets = {};
+    // Halbach ring: 8 magnets in a circle, magnetization rotates
+    const positions = [
+        [2,0], [1,1], [0,2], [-1,1], [-2,0], [-1,-1], [0,-2], [1,-1]
+    ];
+    // For a Halbach ring, the magnetization angle = 2 * position angle
+    // This creates a strong field inside, weak outside
+    for (let i = 0; i < positions.length; i++) {
+        const [gx, gy] = positions[i];
+        const posAngle = Math.atan2(gy, gx);
+        const magAngle = 2 * posAngle; // Halbach condition
+        // Find closest discrete direction
+        const mx = Math.cos(magAngle), my = Math.sin(magAngle);
+        let bestDir = 0, bestDot = -Infinity;
+        for (let d = 0; d < 6; d++) {
+            const dot = DIR_VECTORS[d][0]*mx + DIR_VECTORS[d][1]*my + DIR_VECTORS[d][2]*0;
+            if (dot > bestDot) { bestDot = dot; bestDir = d; }
+        }
+        state.gridMagnets[`${gx},${gy}`] = bestDir;
+    }
+    renderGridEditor();
+    scheduleUpdate();
+}
+
+function loadPresetClear() {
+    state.gridMagnets = {};
+    renderGridEditor();
+    scheduleUpdate();
+}
+
+// ============================================================
+// Web Worker
+// ============================================================
+const workerSrc = document.getElementById('worker-source').textContent;
+const workerBlob = new Blob([workerSrc], { type: 'application/javascript' });
+const workerURL = URL.createObjectURL(workerBlob);
+let worker = new Worker(workerURL);
+
+function requestFieldComputation() {
+    if (state.magnets.length === 0) {
+        state.fieldData = null;
+        document.getElementById('status-text').textContent = 'No magnets';
+        document.getElementById('status-text').className = '';
+        document.getElementById('status-field').textContent = '';
+        render2D();
+        return;
+    }
+    document.getElementById('status-text').textContent = 'Computing...';
+    document.getElementById('status-text').className = 'status-computing';
+    worker.postMessage({
+        magnets: state.magnets,
+        slicePlane: state.slicePlane,
+        sliceOffset: state.sliceOffset,
+        extent: GRID_EXTENT,
+        resolution: state.resolution
+    });
+}
+
+worker.onmessage = (e) => {
+    state.fieldData = e.data;
+    document.getElementById('status-text').textContent = `Computed in ${e.data.ms.toFixed(1)} ms`;
+    document.getElementById('status-text').className = '';
+    const bmag = e.data.Bmag;
+    let maxB = 0;
+    for (let i = 0; i < bmag.length; i++) if (bmag[i] > maxB) maxB = bmag[i];
+    document.getElementById('status-field').textContent = `Max |B|: ${(maxB * 10000).toFixed(1)} G`;
+    render2D();
+};
+
+// ============================================================
+// Three.js 3D Scene
+// ============================================================
+let scene, camera, renderer, controls;
+let magnetGroup, slicePlaneObj;
+
+function initThree() {
+    const container = document.getElementById('three-container');
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    camera = new THREE.PerspectiveCamera(50, w / h, 0.001, 1);
+    camera.position.set(0.06, 0.04, 0.08);
+    camera.lookAt(0, 0, 0);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.12;
+    controls.minDistance = 0.02;
+    controls.maxDistance = 0.3;
+
+    scene.add(new THREE.AmbientLight(0x606080, 1.5));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(0.05, 0.1, 0.05);
+    scene.add(dirLight);
+
+    const grid = new THREE.GridHelper(0.1, 10, 0x333355, 0x222244);
+    grid.rotation.x = Math.PI / 2;
+    scene.add(grid);
+
+    scene.add(new THREE.AxesHelper(0.03));
+
+    const sliceGeo = new THREE.PlaneGeometry(0.1, 0.1);
+    const sliceMat = new THREE.MeshBasicMaterial({
+        color: 0x00aaff, transparent: true, opacity: 0.12, side: THREE.DoubleSide
+    });
+    slicePlaneObj = new THREE.Mesh(sliceGeo, sliceMat);
+    scene.add(slicePlaneObj);
+
+    magnetGroup = new THREE.Group();
+    scene.add(magnetGroup);
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    const ro = new ResizeObserver(() => {
+        const w2 = container.clientWidth;
+        const h2 = container.clientHeight;
+        camera.aspect = w2 / h2;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w2, h2);
+    });
+    ro.observe(container);
+}
+
+function polarizationColor(mx, my, mz) {
+    const mag = Math.sqrt(mx*mx + my*my + mz*mz);
+    if (mag < 1e-10) return 0x808080;
+    const ax = Math.abs(mx), ay = Math.abs(my), az = Math.abs(mz);
+    if (az >= ax && az >= ay) return mz > 0 ? 0xff4444 : 0x4488ff;
+    if (ax >= ay) return mx > 0 ? 0x44cc44 : 0xff8800;
+    return my > 0 ? 0xcccc00 : 0x8844ff;
+}
+
+function update3DMagnets() {
+    while (magnetGroup.children.length) {
+        const c = magnetGroup.children[0];
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) c.material.dispose();
+        magnetGroup.remove(c);
+    }
+
+    const geo = new THREE.BoxGeometry(MAGNET_SIZE * 0.95, MAGNET_SIZE * 0.95, MAGNET_SIZE * 0.95);
+
+    for (const m of state.magnets) {
+        const col = polarizationColor(m.mx, m.my, m.mz);
+        const mat = new THREE.MeshPhongMaterial({ color: col, transparent: true, opacity: 0.85 });
+        const mesh = new THREE.Mesh(geo.clone(), mat);
+        mesh.position.set(m.px, m.py, m.pz);
+        magnetGroup.add(mesh);
+
+        const len = MAGNET_SIZE * 0.8;
+        const mag = Math.sqrt(m.mx*m.mx + m.my*m.my + m.mz*m.mz);
+        if (mag > 1e-10) {
+            const dir = new THREE.Vector3(m.mx/mag, m.my/mag, m.mz/mag);
+            const origin = new THREE.Vector3(m.px, m.py, m.pz);
+            origin.addScaledVector(dir, -len * 0.4);
+            const arrow = new THREE.ArrowHelper(dir, origin, len, 0xffffff, len * 0.3, len * 0.12);
+            magnetGroup.add(arrow);
+        }
+    }
+
+    updateSlicePlane3D();
+    document.getElementById('status-magnets').textContent = `Magnets: ${state.magnets.length}`;
+}
+
+function updateSlicePlane3D() {
+    slicePlaneObj.rotation.set(0, 0, 0);
+    slicePlaneObj.position.set(0, 0, 0);
+    if (state.slicePlane === 'xy') {
+        slicePlaneObj.position.z = state.sliceOffset;
+    } else if (state.slicePlane === 'xz') {
+        slicePlaneObj.rotation.x = Math.PI / 2;
+        slicePlaneObj.position.y = state.sliceOffset;
+    } else {
+        slicePlaneObj.rotation.y = Math.PI / 2;
+        slicePlaneObj.position.x = state.sliceOffset;
+    }
+}
+
+// ============================================================
+// Canvas 2D Heatmap (unchanged)
+// ============================================================
+const hmCanvas = document.getElementById('heatmap-canvas');
+const hmCtx = hmCanvas.getContext('2d');
+
+function resizeHeatmapCanvas() {
+    const container = document.getElementById('canvas-container');
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    hmCanvas.width = container.clientWidth * dpr;
+    hmCanvas.height = container.clientHeight * dpr;
+    hmCtx.scale(dpr, dpr);
+    hmCanvas.style.width = container.clientWidth + 'px';
+    hmCanvas.style.height = container.clientHeight + 'px';
+}
+
+function render2D() {
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    const cw = hmCanvas.width / dpr;
+    const ch = hmCanvas.height / dpr;
+    hmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hmCtx.clearRect(0, 0, cw, ch);
+
+    const fd = state.fieldData;
+    if (!fd) {
+        hmCtx.fillStyle = '#555';
+        hmCtx.font = '14px sans-serif';
+        hmCtx.textAlign = 'center';
+        hmCtx.fillText('Click grid to place magnets', cw/2, ch/2);
+        return;
+    }
+
+    const margin = { top: 36, right: 60, bottom: 44, left: 52 };
+    const pw = cw - margin.left - margin.right;
+    const ph = ch - margin.top - margin.bottom;
+    if (pw <= 0 || ph <= 0) return;
+
+    const n = fd.resolution;
+    const { Bx, By, Bz, Bmag } = fd;
+
+    const logB = new Float64Array(n * n);
+    let minL = Infinity, maxL = -Infinity;
+    for (let i = 0; i < n * n; i++) {
+        const v = Math.log10(Math.max(Bmag[i] * 10000, 1e-2));
+        logB[i] = v;
+        if (v < minL) minL = v;
+        if (v > maxL) maxL = v;
+    }
+    const rangeL = maxL - minL || 1;
+
+    const imgCanvas = document.createElement('canvas');
+    imgCanvas.width = n;
+    imgCanvas.height = n;
+    const imgCtx = imgCanvas.getContext('2d');
+    const imgData = imgCtx.createImageData(n, n);
+    const px = imgData.data;
+
+    for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+            const srcIdx = (n - 1 - j) * n + i;
+            const t = (logB[srcIdx] - minL) / rangeL;
+            const [r, g, b] = colormap(t);
+            const dstIdx = (j * n + i) * 4;
+            px[dstIdx] = r; px[dstIdx+1] = g; px[dstIdx+2] = b; px[dstIdx+3] = 255;
+        }
+    }
+    imgCtx.putImageData(imgData, 0, 0);
+
+    hmCtx.imageSmoothingEnabled = true;
+    hmCtx.drawImage(imgCanvas, margin.left, margin.top, pw, ph);
+
+    if (state.showArrows) {
+        const step = Math.max(2, Math.floor(n / 18));
+        hmCtx.save();
+        hmCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+        hmCtx.fillStyle = 'rgba(0,0,0,0.55)';
+        hmCtx.lineWidth = 1;
+
+        for (let j = Math.floor(step/2); j < n; j += step) {
+            for (let i = Math.floor(step/2); i < n; i += step) {
+                const idx = j * n + i;
+                let b1, b2;
+                if (state.slicePlane === 'xy') { b1 = Bx[idx]; b2 = By[idx]; }
+                else if (state.slicePlane === 'xz') { b1 = Bx[idx]; b2 = Bz[idx]; }
+                else { b1 = By[idx]; b2 = Bz[idx]; }
+
+                const bm = Math.sqrt(b1*b1 + b2*b2);
+                if (bm < 1e-15) continue;
+
+                const dx = b1 / bm;
+                const dy = -b2 / bm;
+
+                const cpx = margin.left + (i / (n-1)) * pw;
+                const cpy = margin.top + (1 - j / (n-1)) * ph;
+
+                const aLen = Math.min(pw / n * step * 0.45, Math.max(4, 6 + 3 * Math.log10(bm * 10000 + 1)));
+                const x1 = cpx - dx * aLen * 0.5;
+                const y1 = cpy - dy * aLen * 0.5;
+                const x2 = cpx + dx * aLen * 0.5;
+                const y2 = cpy + dy * aLen * 0.5;
+
+                hmCtx.beginPath();
+                hmCtx.moveTo(x1, y1);
+                hmCtx.lineTo(x2, y2);
+                hmCtx.stroke();
+
+                const hLen = aLen * 0.35;
+                const ang = Math.atan2(y2 - y1, x2 - x1);
+                hmCtx.beginPath();
+                hmCtx.moveTo(x2, y2);
+                hmCtx.lineTo(x2 - hLen * Math.cos(ang - 0.4), y2 - hLen * Math.sin(ang - 0.4));
+                hmCtx.moveTo(x2, y2);
+                hmCtx.lineTo(x2 - hLen * Math.cos(ang + 0.4), y2 - hLen * Math.sin(ang + 0.4));
+                hmCtx.stroke();
+            }
+        }
+        hmCtx.restore();
+    }
+
+    drawMagnetOutlines2D(margin, pw, ph);
+    drawAxes(margin, pw, ph, cw, ch);
+    drawColorLegend(margin, pw, ph, cw, ch, minL, maxL);
+
+    const planeLabels = { xy: 'XY (Top)', xz: 'XZ (Front)', yz: 'YZ (Side)' };
+    const offCm = (state.sliceOffset * 100).toFixed(1);
+    const thirdAxis = { xy: 'z', xz: 'y', yz: 'x' };
+    hmCtx.fillStyle = '#ccc';
+    hmCtx.font = '13px sans-serif';
+    hmCtx.textAlign = 'center';
+    hmCtx.fillText(
+        `${planeLabels[state.slicePlane]} Slice, ${thirdAxis[state.slicePlane]}=${offCm} cm`,
+        margin.left + pw / 2, margin.top - 10
+    );
+}
+
+function drawMagnetOutlines2D(margin, pw, ph) {
+    const ext = GRID_EXTENT;
+    hmCtx.save();
+    for (const m of state.magnets) {
+        let c1, c2, d1, d2;
+        if (state.slicePlane === 'xy') {
+            c1 = m.px; c2 = m.py; d1 = m.mx; d2 = m.my;
+        } else if (state.slicePlane === 'xz') {
+            c1 = m.px; c2 = m.pz; d1 = m.mx; d2 = m.mz;
+        } else {
+            c1 = m.py; c2 = m.pz; d1 = m.my; d2 = m.mz;
+        }
+        const px = margin.left + ((c1 + ext) / (2 * ext)) * pw;
+        const py = margin.top + ((ext - c2) / (2 * ext)) * ph;
+        const sw = (MAGNET_SIZE / (2 * ext)) * pw;
+        const sh = (MAGNET_SIZE / (2 * ext)) * ph;
+
+        hmCtx.fillStyle = 'rgba(255,255,255,0.35)';
+        hmCtx.fillRect(px - sw/2, py - sh/2, sw, sh);
+        hmCtx.strokeStyle = '#000';
+        hmCtx.lineWidth = 1;
+        hmCtx.strokeRect(px - sw/2, py - sh/2, sw, sh);
+
+        const dm = Math.sqrt(d1*d1 + d2*d2);
+        if (dm > 1e-10) {
+            const nd1 = d1 / dm, nd2 = d2 / dm;
+            const as = Math.min(sw, sh) * 0.35;
+            hmCtx.strokeStyle = '#e94560';
+            hmCtx.lineWidth = 1.5;
+            const ax1 = px - nd1 * as, ay1 = py + nd2 * as;
+            const ax2 = px + nd1 * as, ay2 = py - nd2 * as;
+            hmCtx.beginPath(); hmCtx.moveTo(ax1, ay1); hmCtx.lineTo(ax2, ay2); hmCtx.stroke();
+            const hl = as * 0.5;
+            const ang = Math.atan2(ay2 - ay1, ax2 - ax1);
+            hmCtx.beginPath();
+            hmCtx.moveTo(ax2, ay2);
+            hmCtx.lineTo(ax2 - hl * Math.cos(ang - 0.5), ay2 - hl * Math.sin(ang - 0.5));
+            hmCtx.moveTo(ax2, ay2);
+            hmCtx.lineTo(ax2 - hl * Math.cos(ang + 0.5), ay2 - hl * Math.sin(ang + 0.5));
+            hmCtx.stroke();
+        }
+    }
+    hmCtx.restore();
+}
+
+function drawAxes(margin, pw, ph, cw, ch) {
+    hmCtx.save();
+    hmCtx.strokeStyle = '#555';
+    hmCtx.fillStyle = '#999';
+    hmCtx.lineWidth = 1;
+    hmCtx.font = '11px sans-serif';
+
+    const ext = GRID_EXTENT * 100;
+    for (let v = -Math.floor(ext); v <= Math.floor(ext); v += 1) {
+        const t = (v + ext) / (2 * ext);
+        const bx = margin.left + t * pw;
+        hmCtx.beginPath(); hmCtx.moveTo(bx, margin.top + ph); hmCtx.lineTo(bx, margin.top + ph + 4); hmCtx.stroke();
+        if (v % 2 === 0) { hmCtx.textAlign = 'center'; hmCtx.fillText(v.toString(), bx, margin.top + ph + 16); }
+        const ly = margin.top + (1 - t) * ph;
+        hmCtx.beginPath(); hmCtx.moveTo(margin.left, ly); hmCtx.lineTo(margin.left - 4, ly); hmCtx.stroke();
+        if (v % 2 === 0) { hmCtx.textAlign = 'right'; hmCtx.fillText(v.toString(), margin.left - 6, ly + 4); }
+    }
+
+    const labels = { xy: ['x (cm)', 'y (cm)'], xz: ['x (cm)', 'z (cm)'], yz: ['y (cm)', 'z (cm)'] };
+    const [xLabel, yLabel] = labels[state.slicePlane];
+    hmCtx.fillStyle = '#aaa';
+    hmCtx.font = '12px sans-serif';
+    hmCtx.textAlign = 'center';
+    hmCtx.fillText(xLabel, margin.left + pw / 2, ch - 4);
+    hmCtx.save();
+    hmCtx.translate(12, margin.top + ph / 2);
+    hmCtx.rotate(-Math.PI / 2);
+    hmCtx.fillText(yLabel, 0, 0);
+    hmCtx.restore();
+    hmCtx.strokeStyle = '#444';
+    hmCtx.strokeRect(margin.left, margin.top, pw, ph);
+    hmCtx.restore();
+}
+
+function drawColorLegend(margin, pw, ph, cw, ch, minL, maxL) {
+    const lx = margin.left + pw + 8;
+    const ly = margin.top;
+    const lw = 14;
+    const lh = ph;
+    for (let y = 0; y < lh; y++) {
+        const t = 1 - y / lh;
+        const [r, g, b] = colormap(t);
+        hmCtx.fillStyle = `rgb(${r},${g},${b})`;
+        hmCtx.fillRect(lx, ly + y, lw, 1);
+    }
+    hmCtx.strokeStyle = '#555';
+    hmCtx.strokeRect(lx, ly, lw, lh);
+    hmCtx.fillStyle = '#999';
+    hmCtx.font = '10px sans-serif';
+    hmCtx.textAlign = 'left';
+    for (let i = 0; i <= 5; i++) {
+        const t = i / 5;
+        const logVal = minL + t * (maxL - minL);
+        const gauss = Math.pow(10, logVal);
+        let label;
+        if (gauss >= 10) label = gauss.toFixed(0);
+        else if (gauss >= 1) label = gauss.toFixed(1);
+        else if (gauss >= 0.01) label = gauss.toFixed(2);
+        else label = gauss.toExponential(0);
+        hmCtx.fillText(label, lx + lw + 3, ly + (1 - t) * lh + 3);
+    }
+    hmCtx.fillText('Gauss', lx + lw + 3, ly - 4);
+}
+
+// ============================================================
+// Grid Editor (Canvas-based)
+// ============================================================
+const gridCanvas = document.getElementById('grid-canvas');
+const gridCtx = gridCanvas.getContext('2d');
+
+function resizeGridCanvas() {
+    const panel = document.getElementById('grid-editor-panel');
+    const header = document.getElementById('grid-editor-header');
+    const presets = document.getElementById('preset-buttons');
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    const w = panel.clientWidth;
+    const h = panel.clientHeight - header.offsetHeight - presets.offsetHeight;
+    gridCanvas.width = w * dpr;
+    gridCanvas.height = Math.max(h, 100) * dpr;
+    gridCanvas.style.width = w + 'px';
+    gridCanvas.style.height = Math.max(h, 100) + 'px';
+}
+
+function getGridLayout() {
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    const w = gridCanvas.width / dpr;
+    const h = gridCanvas.height / dpr;
+    const margin = 28;
+    const cs = Math.max(16, Math.min(
+        Math.floor((w - margin * 2) / GRID_SIZE),
+        Math.floor((h - margin * 2) / GRID_SIZE)
+    ));
+    const totalW = cs * GRID_SIZE;
+    const totalH = cs * GRID_SIZE;
+    const originX = (w - totalW) / 2;
+    const originY = (h - totalH) / 2;
+    return { cs, originX, originY, totalW, totalH, w, h };
+}
+
+function renderGridEditor() {
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    const { cs, originX, originY, totalW, totalH, w, h } = getGridLayout();
+    gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    gridCtx.clearRect(0, 0, w, h);
+
+    for (let gy = GRID_MAX; gy >= GRID_MIN; gy--) {
+        for (let gx = GRID_MIN; gx <= GRID_MAX; gx++) {
+            const col = gx - GRID_MIN;
+            const row = GRID_MAX - gy;
+            const x = originX + col * cs;
+            const y = originY + row * cs;
+            const key = `${gx},${gy}`;
+            const dirIdx = state.gridMagnets[key];
+
+            if (dirIdx !== undefined) {
+                drawMagnetCell(x, y, cs, dirIdx);
+            } else {
+                const isHov = state.gridHover && state.gridHover.gx === gx && state.gridHover.gy === gy;
+                drawEmptyCell(x, y, cs, isHov);
+            }
+        }
+    }
+
+    // Axis labels
+    gridCtx.fillStyle = '#666';
+    gridCtx.font = `${Math.min(10, cs * 0.45)}px sans-serif`;
+    gridCtx.textAlign = 'center';
+    for (let gx = GRID_MIN; gx <= GRID_MAX; gx++) {
+        if (gx % 2 !== 0 && cs < 22) continue;
+        const col = gx - GRID_MIN;
+        gridCtx.fillText(gx.toString(), originX + col * cs + cs/2, originY + totalH + 12);
+    }
+    gridCtx.textAlign = 'right';
+    for (let gy = GRID_MIN; gy <= GRID_MAX; gy++) {
+        if (gy % 2 !== 0 && cs < 22) continue;
+        const row = GRID_MAX - gy;
+        gridCtx.fillText(gy.toString(), originX - 3, originY + row * cs + cs/2 + 3);
+    }
+
+    gridCtx.fillStyle = '#888';
+    gridCtx.font = '11px sans-serif';
+    gridCtx.textAlign = 'center';
+    gridCtx.fillText('X', originX + totalW / 2, originY + totalH + 24);
+    gridCtx.save();
+    gridCtx.translate(originX - 18, originY + totalH / 2);
+    gridCtx.rotate(-Math.PI / 2);
+    gridCtx.fillText('Y', 0, 0);
+    gridCtx.restore();
+}
+
+function drawMagnetCell(x, y, cs, dirIdx) {
+    const p = 1;
+    const cx = x + p, cy = y + p, sz = cs - 2 * p;
+
+    switch (dirIdx) {
+        case 0: // +X: S left, N right
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.fillRect(cx, cy, sz / 2, sz);
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.fillRect(cx + sz / 2, cy, sz / 2, sz);
+            break;
+        case 1: // -X: N left, S right
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.fillRect(cx, cy, sz / 2, sz);
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.fillRect(cx + sz / 2, cy, sz / 2, sz);
+            break;
+        case 2: // +Y: N top, S bottom
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.fillRect(cx, cy, sz, sz / 2);
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.fillRect(cx, cy + sz / 2, sz, sz / 2);
+            break;
+        case 3: // -Y: S top, N bottom
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.fillRect(cx, cy, sz, sz / 2);
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.fillRect(cx, cy + sz / 2, sz, sz / 2);
+            break;
+        case 4: // +Z: blue bg, red center circle, white dot
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.fillRect(cx, cy, sz, sz);
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.beginPath();
+            gridCtx.arc(cx + sz/2, cy + sz/2, sz * 0.32, 0, Math.PI * 2);
+            gridCtx.fill();
+            gridCtx.fillStyle = '#fff';
+            gridCtx.beginPath();
+            gridCtx.arc(cx + sz/2, cy + sz/2, sz * 0.08, 0, Math.PI * 2);
+            gridCtx.fill();
+            break;
+        case 5: // -Z: red bg, blue center circle, white X
+            gridCtx.fillStyle = N_COLOR;
+            gridCtx.fillRect(cx, cy, sz, sz);
+            gridCtx.fillStyle = S_COLOR;
+            gridCtx.beginPath();
+            gridCtx.arc(cx + sz/2, cy + sz/2, sz * 0.32, 0, Math.PI * 2);
+            gridCtx.fill();
+            gridCtx.strokeStyle = '#fff';
+            gridCtx.lineWidth = Math.max(1, sz * 0.06);
+            const r = sz * 0.15;
+            gridCtx.beginPath();
+            gridCtx.moveTo(cx + sz/2 - r, cy + sz/2 - r);
+            gridCtx.lineTo(cx + sz/2 + r, cy + sz/2 + r);
+            gridCtx.moveTo(cx + sz/2 + r, cy + sz/2 - r);
+            gridCtx.lineTo(cx + sz/2 - r, cy + sz/2 + r);
+            gridCtx.stroke();
+            break;
+    }
+
+    // Border
+    gridCtx.strokeStyle = '#556';
+    gridCtx.lineWidth = 1;
+    gridCtx.strokeRect(cx, cy, sz, sz);
+
+    // Label
+    if (cs >= 20) {
+        gridCtx.fillStyle = '#fff';
+        gridCtx.font = `bold ${Math.max(8, cs * 0.28)}px sans-serif`;
+        gridCtx.textAlign = 'center';
+        gridCtx.textBaseline = 'middle';
+        gridCtx.fillText(DIR_LABELS[dirIdx], cx + sz/2, cy + sz/2);
+        gridCtx.textBaseline = 'alphabetic';
+    }
+}
+
+function drawEmptyCell(x, y, cs, isHover) {
+    const p = 1;
+    const cx = x + p, cy = y + p, sz = cs - 2 * p;
+
+    if (isHover) {
+        gridCtx.fillStyle = 'rgba(255,255,255,0.07)';
+        gridCtx.fillRect(cx, cy, sz, sz);
+    }
+
+    gridCtx.strokeStyle = isHover ? '#557' : '#2a2a44';
+    gridCtx.lineWidth = 0.5;
+    gridCtx.setLineDash([2, 2]);
+    gridCtx.strokeRect(cx, cy, sz, sz);
+    gridCtx.setLineDash([]);
+}
+
+// ============================================================
+// Grid Editor Interaction
+// ============================================================
+function gridCoordsFromMouse(e) {
+    const rect = gridCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const { cs, originX, originY } = getGridLayout();
+
+    const col = Math.floor((mx - originX) / cs);
+    const row = Math.floor((my - originY) / cs);
+    if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return null;
+
+    return { gx: GRID_MIN + col, gy: GRID_MAX - row };
+}
+
+function initGridEvents() {
+    gridCanvas.addEventListener('click', (e) => {
+        const pos = gridCoordsFromMouse(e);
+        if (!pos) return;
+        const key = `${pos.gx},${pos.gy}`;
+
+        if (e.shiftKey) {
+            delete state.gridMagnets[key];
+        } else if (key in state.gridMagnets) {
+            state.gridMagnets[key] = nextDirection(state.gridMagnets[key]);
+        } else {
+            state.gridMagnets[key] = 4; // default +Z
+        }
+        renderGridEditor();
+        scheduleUpdate();
+    });
+
+    gridCanvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const pos = gridCoordsFromMouse(e);
+        if (!pos) return;
+        delete state.gridMagnets[`${pos.gx},${pos.gy}`];
+        renderGridEditor();
+        scheduleUpdate();
+    });
+
+    gridCanvas.addEventListener('mousemove', (e) => {
+        const pos = gridCoordsFromMouse(e);
+        const key = pos ? `${pos.gx},${pos.gy}` : null;
+        const isEmpty = key && !(key in state.gridMagnets);
+
+        if (isEmpty) {
+            if (!state.gridHover || state.gridHover.gx !== pos.gx || state.gridHover.gy !== pos.gy) {
+                state.gridHover = pos;
+                renderGridEditor();
+            }
+        } else if (state.gridHover) {
+            state.gridHover = null;
+            renderGridEditor();
+        }
+
+        // Change cursor
+        if (pos && key in state.gridMagnets) {
+            gridCanvas.style.cursor = 'pointer';
+        } else {
+            gridCanvas.style.cursor = 'crosshair';
+        }
+    });
+
+    gridCanvas.addEventListener('mouseleave', () => {
+        if (state.gridHover) {
+            state.gridHover = null;
+            renderGridEditor();
+        }
+        gridCanvas.style.cursor = 'crosshair';
+    });
+}
+
+// ============================================================
+// Throttle & Update
+// ============================================================
+let updateTimer = null;
+function scheduleUpdate() {
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+        updateTimer = null;
+        rebuildMagnets();
+        update3DMagnets();
+        requestFieldComputation();
+    }, THROTTLE_MS);
+}
+
+function scheduleViewUpdate() {
+    render2D();
+}
+
+// ============================================================
+// Event Listeners
+// ============================================================
+function initEvents() {
+    const selPlane = document.getElementById('sel-plane');
+    const rngOffset = document.getElementById('rng-offset');
+    const valOffset = document.getElementById('val-offset');
+    const rngRes = document.getElementById('rng-resolution');
+    const valRes = document.getElementById('val-resolution');
+    const chkArrows = document.getElementById('chk-arrows');
+
+    selPlane.addEventListener('change', () => {
+        state.slicePlane = selPlane.value;
+        updateSlicePlane3D();
+        scheduleUpdate();
+    });
+
+    rngOffset.addEventListener('input', () => {
+        state.sliceOffset = parseFloat(rngOffset.value) / 100;
+        valOffset.textContent = rngOffset.value;
+        updateSlicePlane3D();
+        scheduleUpdate();
+    });
+
+    rngRes.addEventListener('input', () => {
+        state.resolution = parseInt(rngRes.value);
+        valRes.textContent = rngRes.value;
+        scheduleUpdate();
+    });
+
+    chkArrows.addEventListener('change', () => {
+        state.showArrows = chkArrows.checked;
+        scheduleViewUpdate();
+    });
+
+    // Grid editor
+    initGridEvents();
+
+    // Preset buttons
+    document.getElementById('btn-linear').addEventListener('click', loadPresetLinear);
+    document.getElementById('btn-cross').addEventListener('click', loadPresetCross);
+    document.getElementById('btn-ring').addEventListener('click', loadPresetRing);
+    document.getElementById('btn-clear').addEventListener('click', loadPresetClear);
+
+    // Resize observers
+    const canvasRO = new ResizeObserver(() => { resizeHeatmapCanvas(); render2D(); });
+    canvasRO.observe(document.getElementById('canvas-container'));
+
+    const gridRO = new ResizeObserver(() => { resizeGridCanvas(); renderGridEditor(); });
+    gridRO.observe(document.getElementById('grid-editor-panel'));
+}
+
+// ============================================================
+// Init
+// ============================================================
+function init() {
+    initThree();
+    resizeHeatmapCanvas();
+    resizeGridCanvas();
+    initEvents();
+    loadPresetLinear(); // default: 8-magnet linear Halbach
+}
+
+init();
+
+</script>
+</body>
+</html>
