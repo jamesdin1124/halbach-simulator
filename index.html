@@ -1030,6 +1030,9 @@ function drawMagnetOutlines2D(margin, pw, ph) {
 function drawIronOutlines2D(margin, pw, ph) {
     if (state.irons.length === 0) return;
     const ext = GRID_EXTENT;
+    const magnetPx = (MAGNET_SIZE / (2 * ext)) * pw;       // 1cm in pixels
+    const ironThickPx = (IRON_THICKNESS / (2 * ext)) * pw;  // 0.1cm in pixels
+    const minThick = 2;
     hmCtx.save();
     for (const iron of state.irons) {
         let c1, c2;
@@ -1040,25 +1043,18 @@ function drawIronOutlines2D(margin, pw, ph) {
         } else {
             c1 = iron.py; c2 = iron.pz;
         }
-        const px = margin.left + ((c1 + ext) / (2 * ext)) * pw;
-        const py = margin.top + ((ext - c2) / (2 * ext)) * ph;
-        const sw = (MAGNET_SIZE / (2 * ext)) * pw;
-        const sh = (MAGNET_SIZE / (2 * ext)) * ph;
+        const cx = margin.left + ((c1 + ext) / (2 * ext)) * pw;
+        const cy = margin.top + ((ext - c2) / (2 * ext)) * ph;
 
-        // Gray filled square with dark border
-        hmCtx.fillStyle = 'rgba(160,160,160,0.5)';
-        hmCtx.fillRect(px - sw/2, py - sh/2, sw, sh);
-        hmCtx.strokeStyle = '#444';
-        hmCtx.lineWidth = 1.5;
-        hmCtx.strokeRect(px - sw/2, py - sh/2, sw, sh);
+        // Thin iron plate: narrow in X, full height in Y/Z
+        const tw = Math.max(minThick, ironThickPx);
+        const th = magnetPx;
 
-        // "Fe" label
-        hmCtx.fillStyle = '#333';
-        hmCtx.font = `bold ${Math.max(7, sw * 0.4)}px sans-serif`;
-        hmCtx.textAlign = 'center';
-        hmCtx.textBaseline = 'middle';
-        hmCtx.fillText('Fe', px, py);
-        hmCtx.textBaseline = 'alphabetic';
+        hmCtx.fillStyle = 'rgba(120,120,120,0.7)';
+        hmCtx.fillRect(cx - tw/2, cy - th/2, tw, th);
+        hmCtx.strokeStyle = '#333';
+        hmCtx.lineWidth = 1;
+        hmCtx.strokeRect(cx - tw/2, cy - th/2, tw, th);
     }
     hmCtx.restore();
 }
