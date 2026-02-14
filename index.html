@@ -145,7 +145,7 @@ body {
     min-height: 0;
 }
 #three-container {
-    flex: 1;
+    flex: 0.6;
     position: relative;
     min-width: 0;
 }
@@ -155,7 +155,7 @@ body {
     height: 100% !important;
 }
 #canvas-container {
-    flex: 1;
+    flex: 1.4;
     position: relative;
     min-width: 0;
     display: flex;
@@ -697,9 +697,15 @@ function render2D() {
     }
 
     const margin = { top: 36, right: 60, bottom: 44, left: 52 };
-    const pw = cw - margin.left - margin.right;
-    const ph = ch - margin.top - margin.bottom;
-    if (pw <= 0 || ph <= 0) return;
+    const rawPw = cw - margin.left - margin.right;
+    const rawPh = ch - margin.top - margin.bottom;
+    if (rawPw <= 0 || rawPh <= 0) return;
+    // Force square plot area so magnets are not distorted
+    const plotSize = Math.min(rawPw, rawPh);
+    const pw = plotSize;
+    const ph = plotSize;
+    margin.left += (rawPw - pw) / 2;
+    margin.top += (rawPh - ph) / 2;
 
     const n = fd.resolution;
     const { Bx, By, Bz, Bmag } = fd;
