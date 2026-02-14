@@ -582,29 +582,27 @@ function loadPresetRing() {
     scheduleUpdate();
 }
 
-// Whiteboard presets: NS=→(+X=0), SN=←(-X=1), N/S=↑(+Y=2..actually +Z=4),
-// Reading the whiteboard: NS means N-left S-right = pointing right = +X
-// S/N means S-top N-bottom = pointing up = +Z in our convention
-// Actually in the whiteboard context (2D top-down view):
-//   NS (side by side) = +X direction (N on left reading direction, S on right? Actually N pointing right)
-//   SN = -X direction
-//   N/S (stacked, N on top) = +Z (pointing up/out)
-//   S/N (stacked, S on top) = -Z (pointing down/in)
+// Whiteboard presets — iron plates sandwiched between magnets at boundary positions
+// Iron is at half-grid positions (e.g., "0.5,0") = boundary between adjacent magnets
+// Magnets use integer grid positions, iron uses x.5 positions
 
-// 9°A: 5 magnets →, ↑, ←, ↓, → (Halbach, strong top)
+// 9°A: 5 magnets →↑←↓→ + iron between each pair
 function loadPreset9A() {
     state.gridMagnets = {};
     state.gridIrons = {};
-    // NS=+X, S/N with N-bottom=+Z, SN=-X, N/S with N-top=-Z, NS=+X
     const dirs = [0, 4, 1, 5, 0]; // +X, +Z, -X, -Z, +X
     for (let i = 0; i < 5; i++) {
         state.gridMagnets[`${i - 2},0`] = dirs[i];
+    }
+    // Iron at boundaries: between each pair of adjacent magnets
+    for (let i = 0; i < 4; i++) {
+        state.gridIrons[`${i - 2 + 0.5},0`] = true;
     }
     renderGridEditor();
     scheduleUpdate();
 }
 
-// 10°B: 5 magnets ↑, →, ↓, ←, ↑ (phase-shifted Halbach)
+// 10°B: 5 magnets ↑→↓←↑ + iron between each pair
 function loadPreset10B() {
     state.gridMagnets = {};
     state.gridIrons = {};
@@ -612,43 +610,44 @@ function loadPreset10B() {
     for (let i = 0; i < 5; i++) {
         state.gridMagnets[`${i - 2},0`] = dirs[i];
     }
+    for (let i = 0; i < 4; i++) {
+        state.gridIrons[`${i - 2 + 0.5},0`] = true;
+    }
     renderGridEditor();
     scheduleUpdate();
 }
 
-// 11°A: Same as 9A but with iron plates between each magnet
+// 11°A: 5 magnets →↑←↓→ + iron between + on both ends
 function loadPreset11A() {
     state.gridMagnets = {};
     state.gridIrons = {};
-    // Magnets at even positions, iron at odd positions
-    // Positions: -4,-3,-2,-1,0,1,2,3,4
-    // Magnets at -4,-2,0,2,4 with dirs: +X, +Z, -X, -Z, +X
     const dirs = [0, 4, 1, 5, 0];
     for (let i = 0; i < 5; i++) {
-        state.gridMagnets[`${i * 2 - 4},0`] = dirs[i];
+        state.gridMagnets[`${i - 2},0`] = dirs[i];
     }
-    // Iron between: at -3, -1, 1, 3
-    for (const gx of [-3, -1, 1, 3]) {
-        state.gridIrons[`${gx},0`] = true;
+    // Iron between each pair + on both outer sides
+    for (let i = 0; i < 4; i++) {
+        state.gridIrons[`${i - 2 + 0.5},0`] = true;
     }
+    state.gridIrons['-2.5,0'] = true;  // left end
+    state.gridIrons['2.5,0'] = true;   // right end
     renderGridEditor();
     scheduleUpdate();
 }
 
-// 12°B: Same as 10B but with iron between + on both ends
+// 12°B: 5 magnets ↑→↓←↑ + iron between + on both ends
 function loadPreset12B() {
     state.gridMagnets = {};
     state.gridIrons = {};
-    // Magnets at -3,-1,1,3,5 with dirs: +Z, +X, -Z, -X, +Z
-    // Iron at -5,-4,-2,0,2,4 (between magnets + both ends)
     const dirs = [4, 0, 5, 1, 4];
     for (let i = 0; i < 5; i++) {
-        state.gridMagnets[`${i * 2 - 3},0`] = dirs[i];
+        state.gridMagnets[`${i - 2},0`] = dirs[i];
     }
-    // Iron between and on sides
-    for (const gx of [-5, -4, -2, 0, 2, 4]) {
-        state.gridIrons[`${gx},0`] = true;
+    for (let i = 0; i < 4; i++) {
+        state.gridIrons[`${i - 2 + 0.5},0`] = true;
     }
+    state.gridIrons['-2.5,0'] = true;
+    state.gridIrons['2.5,0'] = true;
     renderGridEditor();
     scheduleUpdate();
 }
@@ -1177,15 +1176,64 @@ function renderGridEditor() {
             const y = originY + row * cs;
             const key = `${gx},${gy}`;
             const dirIdx = state.gridMagnets[key];
-            const isIron = state.gridIrons[key];
 
             if (dirIdx !== undefined) {
                 drawMagnetCell(x, y, cs, dirIdx);
-            } else if (isIron) {
-                drawIronCell(x, y, cs);
             } else {
                 const isHov = state.gridHover && state.gridHover.gx === gx && state.gridHover.gy === gy;
                 drawEmptyCell(x, y, cs, isHov);
+            }
+        }
+    }
+
+    // Draw iron pieces at half-grid (boundary) positions
+    for (const key of Object.keys(state.gridIrons)) {
+        const [igx, igy] = key.split(',').map(Number);
+        // Convert fractional grid coords to pixel position
+        const col = igx - GRID_MIN;
+        const row = GRID_MAX - igy;
+        const ix = originX + col * cs;
+        const iy = originY + row * cs;
+        // Iron is thin: draw as narrow strip
+        const isHorizontal = (igx % 1 !== 0); // x is fractional = vertical strip between x-neighbors
+        const isVertical = (igy % 1 !== 0);    // y is fractional = horizontal strip between y-neighbors
+        if (isHorizontal) {
+            // Thin vertical strip at boundary
+            const stripW = Math.max(3, cs * 0.15);
+            const stripH = cs;
+            const sx = ix + cs/2 - stripW/2;
+            const sy = iy;
+            gridCtx.fillStyle = '#7a7a7a';
+            gridCtx.fillRect(sx, sy, stripW, stripH);
+            gridCtx.strokeStyle = '#444';
+            gridCtx.lineWidth = 1;
+            gridCtx.strokeRect(sx, sy, stripW, stripH);
+        } else if (isVertical) {
+            // Thin horizontal strip at boundary
+            const stripW = cs;
+            const stripH = Math.max(3, cs * 0.15);
+            const sx = ix;
+            const sy = iy + cs/2 - stripH/2;
+            gridCtx.fillStyle = '#7a7a7a';
+            gridCtx.fillRect(sx, sy, stripW, stripH);
+            gridCtx.strokeStyle = '#444';
+            gridCtx.lineWidth = 1;
+            gridCtx.strokeRect(sx, sy, stripW, stripH);
+        } else {
+            // Integer position iron (legacy/manual): draw as full cell
+            const cx = ix + 1, cy = iy + 1, sz = cs - 2;
+            gridCtx.fillStyle = '#7a7a7a';
+            gridCtx.fillRect(cx, cy, sz, sz);
+            gridCtx.strokeStyle = '#444';
+            gridCtx.lineWidth = 1;
+            gridCtx.strokeRect(cx, cy, sz, sz);
+            if (cs >= 20) {
+                gridCtx.fillStyle = '#fff';
+                gridCtx.font = `bold ${Math.max(8, cs * 0.3)}px sans-serif`;
+                gridCtx.textAlign = 'center';
+                gridCtx.textBaseline = 'middle';
+                gridCtx.fillText('Fe', cx + sz/2, cy + sz/2);
+                gridCtx.textBaseline = 'alphabetic';
             }
         }
     }
@@ -1360,6 +1408,48 @@ function gridCoordsFromMouse(e) {
     return { gx: GRID_MIN + col, gy: GRID_MAX - row };
 }
 
+// For iron placement: find nearest cell edge (half-grid position)
+function gridEdgeFromMouse(e) {
+    const rect = gridCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const { cs, originX, originY } = getGridLayout();
+
+    // Position relative to grid in fractional cell units
+    const fcol = (mx - originX) / cs;
+    const frow = (my - originY) / cs;
+
+    // Find nearest cell edge
+    const nearestColEdge = Math.round(fcol); // 0,1,2...11 → boundaries between cells
+    const nearestRowEdge = Math.round(frow);
+    const distCol = Math.abs(fcol - nearestColEdge);
+    const distRow = Math.abs(frow - nearestRowEdge);
+
+    // Determine if nearest edge is vertical or horizontal
+    if (distCol < distRow && distCol < 0.35) {
+        // Vertical edge (between left and right cells)
+        const leftCol = nearestColEdge - 1;
+        const rightCol = nearestColEdge;
+        if (leftCol < 0 || rightCol >= GRID_SIZE) return null;
+        const row2 = Math.floor(frow);
+        if (row2 < 0 || row2 >= GRID_SIZE) return null;
+        const gx = GRID_MIN + nearestColEdge - 0.5; // half position
+        const gy = GRID_MAX - row2;
+        return { gx, gy };
+    } else if (distRow < 0.35) {
+        // Horizontal edge (between top and bottom cells)
+        const col2 = Math.floor(fcol);
+        if (col2 < 0 || col2 >= GRID_SIZE) return null;
+        const topRow = nearestRowEdge - 1;
+        const botRow = nearestRowEdge;
+        if (topRow < 0 || botRow >= GRID_SIZE) return null;
+        const gx = GRID_MIN + col2;
+        const gy = GRID_MAX - nearestRowEdge + 0.5; // half position
+        return { gx, gy };
+    }
+    return null;
+}
+
 function initGridEvents() {
     gridCanvas.addEventListener('click', (e) => {
         const pos = gridCoordsFromMouse(e);
@@ -1367,16 +1457,23 @@ function initGridEvents() {
         const key = `${pos.gx},${pos.gy}`;
 
         if (e.shiftKey) {
-            // Remove whatever is here
+            // Remove magnet + any nearby iron
             delete state.gridMagnets[key];
-            delete state.gridIrons[key];
+            // Also remove iron at adjacent half-grid positions
+            delete state.gridIrons[`${pos.gx - 0.5},${pos.gy}`];
+            delete state.gridIrons[`${pos.gx + 0.5},${pos.gy}`];
+            delete state.gridIrons[`${pos.gx},${pos.gy - 0.5}`];
+            delete state.gridIrons[`${pos.gx},${pos.gy + 0.5}`];
         } else if (e.ctrlKey || e.metaKey) {
-            // Ctrl/Cmd-click: toggle iron piece
-            if (key in state.gridIrons) {
-                delete state.gridIrons[key];
-            } else {
-                delete state.gridMagnets[key]; // remove magnet if present
-                state.gridIrons[key] = true;
+            // Ctrl/Cmd-click: place/remove iron at nearest cell edge
+            const edge = gridEdgeFromMouse(e);
+            if (edge) {
+                const ironKey = `${edge.gx},${edge.gy}`;
+                if (ironKey in state.gridIrons) {
+                    delete state.gridIrons[ironKey];
+                } else {
+                    state.gridIrons[ironKey] = true;
+                }
             }
         } else if (key in state.gridMagnets) {
             state.gridMagnets[key] = nextDirection(state.gridMagnets[key]);
@@ -1393,11 +1490,22 @@ function initGridEvents() {
 
     gridCanvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        // Try to remove iron at edge first
+        const edge = gridEdgeFromMouse(e);
+        if (edge) {
+            const ironKey = `${edge.gx},${edge.gy}`;
+            if (ironKey in state.gridIrons) {
+                delete state.gridIrons[ironKey];
+                renderGridEditor();
+                scheduleUpdate();
+                return;
+            }
+        }
+        // Otherwise remove magnet at cell
         const pos = gridCoordsFromMouse(e);
         if (!pos) return;
         const key = `${pos.gx},${pos.gy}`;
         delete state.gridMagnets[key];
-        delete state.gridIrons[key];
         renderGridEditor();
         scheduleUpdate();
     });
